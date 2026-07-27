@@ -32,6 +32,23 @@ public class MergeCodeLoader implements ICodeLoader {
 	}
 
 	@Override
+	public boolean visitClass(String clsName, Consumer<IClassData> consumer) {
+		for (ICodeLoader codeLoader : codeLoaders) {
+			if (codeLoader.visitClass(clsName, consumer)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	@Override
+	public void prepareSingleClassLookup() {
+		for (ICodeLoader codeLoader : codeLoaders) {
+			codeLoader.prepareSingleClassLookup();
+		}
+	}
+
+	@Override
 	public boolean isEmpty() {
 		for (ICodeLoader codeLoader : codeLoaders) {
 			if (!codeLoader.isEmpty()) {

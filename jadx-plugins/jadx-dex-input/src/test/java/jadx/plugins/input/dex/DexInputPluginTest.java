@@ -34,6 +34,25 @@ class DexInputPluginTest {
 		processFile(SmaliTestUtils.compileSmaliFromResource("samples/test.smali"));
 	}
 
+	@Test
+	public void loadSingleClass() throws Exception {
+		Path sample = Paths.get(ClassLoader.getSystemResource("samples/app-with-fake-dex.apk").toURI());
+		try (ICodeLoader result = new DexInputPlugin().loadFiles(List.of(sample))) {
+			result.prepareSingleClassLookup();
+			AtomicInteger count = new AtomicInteger();
+			boolean found = result.visitClass("com.github.skylot.simple.MainActivity", cls -> {
+				assertThat(cls.getType()).isEqualTo("Lcom/github/skylot/simple/MainActivity;");
+				count.incrementAndGet();
+			});
+
+			assertThat(found).isTrue();
+			assertThat(count.get()).isEqualTo(1);
+			assertThat(result.visitClass("Lcom/github/skylot/simple/MainActivity;", cls -> count.incrementAndGet())).isTrue();
+			assertThat(count.get()).isEqualTo(2);
+			assertThat(result.visitClass("missing.Class", cls -> count.incrementAndGet())).isFalse();
+		}
+	}
+
 	private static void processFile(Path sample) throws IOException {
 		System.out.println("Input file: " + sample.toAbsolutePath());
 		long start = System.currentTimeMillis();

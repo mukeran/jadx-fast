@@ -8,10 +8,12 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
@@ -36,6 +38,7 @@ import jadx.api.plugins.pass.types.JadxAfterLoadPass;
 import jadx.api.plugins.pass.types.JadxPassType;
 import jadx.api.utils.tasks.ITaskExecutor;
 import jadx.core.Jadx;
+import jadx.core.clsp.ClspGraph;
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.nodes.ClassNode;
 import jadx.core.dex.nodes.FieldNode;
@@ -102,8 +105,12 @@ public final class JadxDecompiler implements Closeable {
 	private final List<CustomResourcesLoader> customResourcesLoaders = new ArrayList<>();
 	private final Map<JadxPassType, List<JadxPass>> customPasses = new HashMap<>();
 	private final List<Closeable> closeableList = new ArrayList<>();
+	private final Map<String, Long> singleClassPrepareTimingsNanos = new LinkedHashMap<>();
+	private final Map<String, Long> singleClassRequestTimingsNanos = new LinkedHashMap<>();
 
 	private IJadxEvents events = new JadxEventsImpl();
+	private boolean singleClassInputPrepared;
+	private ClspGraph singleClassBaseClsp;
 
 	public JadxDecompiler() {
 		this(new JadxArgs());
@@ -136,6 +143,134 @@ public final class JadxDecompiler implements Closeable {
 		root.runPreDecompileStage();
 		root.initPasses();
 		loadFinished();
+	}
+
+	public void loadSingleClass(String clsName) {
+		prepareSingleClassInput();
+		reloadSingleClass(clsName);
+	}
+
+	public void prepareSingleClassInput() {
+		long totalStart = System.nanoTime();
+		reset();
+		closeAll(loadedInputs);
+		customPasses.clear();
+		singleClassInputPrepared = false;
+		singleClassBaseClsp = null;
+		singleClassPrepareTimingsNanos.clear();
+
+		long start = System.nanoTime();
+		JadxArgsValidator.validate(this);
+		FileUtils.updateTempRootDir(args.getFilesGetter().getTempDir());
+		addTiming(singleClassPrepareTimingsNanos, "validation", start);
+
+		start = System.nanoTime();
+		loadPlugins();
+		addTiming(singleClassPrepareTimingsNanos, "plugins", start);
+
+		long classpathStart = System.nanoTime();
+		CompletableFuture<ClspGraph> classpathFuture;
+		if (args.isLoadJadxClsSetFile()) {
+			classpathFuture = CompletableFuture.supplyAsync(() -> {
+				RootNode baseRoot = new RootNode(this);
+				return baseRoot.loadBaseClassPath();
+			});
+		} else {
+			classpathFuture = CompletableFuture.completedFuture(null);
+		}
+
+		start = System.nanoTime();
+		loadInputFiles();
+		addTiming(singleClassPrepareTimingsNanos, "input", start);
+		singleClassBaseClsp = classpathFuture.join();
+		addTiming(singleClassPrepareTimingsNanos, "classpath-base", classpathStart);
+		singleClassInputPrepared = true;
+		addTiming(singleClassPrepareTimingsNanos, "total", totalStart);
+	}
+
+	public boolean reloadSingleClass(String clsName) {
+		if (!singleClassInputPrepared) {
+			throw new JadxRuntimeException("Single class input is not prepared");
+		}
+		LOG.info("loading single class: {}", clsName);
+		long totalStart = System.nanoTime();
+		singleClassRequestTimingsNanos.clear();
+		root = null;
+		classes = null;
+		resources = null;
+		args.getAliasProvider().initIndexes(0, 0, 0, 0);
+
+		long start = System.nanoTime();
+		root = new RootNode(this);
+		root.setSingleClassMode(true);
+		root.init();
+		addTiming(singleClassRequestTimingsNanos, "root-init", start);
+
+		start = System.nanoTime();
+		boolean found = root.loadSingleClass(loadedInputs, clsName);
+		addTiming(singleClassRequestTimingsNanos, "class-lookup", start);
+		if (!found) {
+			LOG.warn("Single class fast path did not find class: {}", clsName);
+		}
+
+		start = System.nanoTime();
+		if (!args.isSkipResources()) {
+			root.loadResources(resourcesLoader, getResources());
+		}
+		addTiming(singleClassRequestTimingsNanos, "resources", start);
+
+		start = System.nanoTime();
+		root.finishClassLoad();
+		addTiming(singleClassRequestTimingsNanos, "class-finish", start);
+
+		start = System.nanoTime();
+		if (args.isLoadJadxClsSetFile()) {
+			if (singleClassBaseClsp == null) {
+				singleClassBaseClsp = root.loadBaseClassPath();
+			}
+			root.initClassPath(singleClassBaseClsp);
+		} else {
+			root.initClassPath();
+		}
+		addTiming(singleClassRequestTimingsNanos, "classpath", start);
+
+		start = System.nanoTime();
+		root.mergePasses(customPasses);
+		addTiming(singleClassRequestTimingsNanos, "pass-merge", start);
+
+		start = System.nanoTime();
+		root.runPreDecompileStage();
+		addTiming(singleClassRequestTimingsNanos, "pre-decompile", start);
+
+		start = System.nanoTime();
+		root.initPasses();
+		loadFinished();
+		addTiming(singleClassRequestTimingsNanos, "pass-init", start);
+		addTiming(singleClassRequestTimingsNanos, "total", totalStart);
+		return found;
+	}
+
+	public void prepareSingleClassLookup() {
+		if (!singleClassInputPrepared) {
+			throw new JadxRuntimeException("Single class input is not prepared");
+		}
+		long start = System.nanoTime();
+		loadedInputs.forEach(ICodeLoader::prepareSingleClassLookup);
+		long indexNanos = System.nanoTime() - start;
+		singleClassPrepareTimingsNanos.put("class-index", indexNanos);
+		singleClassPrepareTimingsNanos.computeIfPresent("total", (name, total) -> total + indexNanos);
+	}
+
+	public Map<String, Long> getSingleClassPrepareTimingsNanos() {
+		return Collections.unmodifiableMap(singleClassPrepareTimingsNanos);
+	}
+
+	public Map<String, Long> getSingleClassRequestTimingsNanos() {
+		return Collections.unmodifiableMap(singleClassRequestTimingsNanos);
+	}
+
+	private static void addTiming(Map<String, Long> timings, String name, long startNanos) {
+		timings.put(name, System.nanoTime() - startNanos);
 	}
 
 	/**
@@ -188,6 +323,8 @@ public final class JadxDecompiler implements Closeable {
 
 	@Override
 	public void close() {
+		singleClassInputPrepared = false;
+		singleClassBaseClsp = null;
 		reset();
 		closeAll(loadedInputs);
 		closeAll(customCodeLoaders);

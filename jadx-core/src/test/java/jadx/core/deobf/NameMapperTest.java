@@ -3,6 +3,7 @@ package jadx.core.deobf;
 import org.junit.jupiter.api.Test;
 
 import static jadx.core.deobf.NameMapper.isValidIdentifier;
+import static jadx.core.deobf.NameMapper.makeValidIdentifier;
 import static jadx.core.deobf.NameMapper.removeInvalidChars;
 import static jadx.core.deobf.NameMapper.removeInvalidCharsMiddle;
 import static jadx.tests.api.utils.assertj.JadxAssertions.assertThat;
@@ -33,5 +34,12 @@ public class NameMapperTest {
 		assertThat(removeInvalidChars("1cls", "C")).isEqualTo("C1cls");
 		assertThat(removeInvalidChars("-cls", "C")).isEqualTo("cls");
 		assertThat(removeInvalidChars("A-cls", "C")).isEqualTo("Acls");
+	}
+
+	@Test
+	public void testMakeValidIdentifier() {
+		assertThat(makeValidIdentifier("1cls", "C")).isEqualTo("C1cls");
+		assertThat(makeValidIdentifier("class", "C")).isEqualTo("Cclass");
+		assertThat(makeValidIdentifier("---", "C")).isEqualTo("C");
 	}
 }

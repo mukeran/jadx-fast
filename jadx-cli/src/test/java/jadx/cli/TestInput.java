@@ -35,6 +35,17 @@ public class TestInput extends BaseCliIntegrationTest {
 	}
 
 	@Test
+	public void testFastSingleClassInput() throws Exception {
+		int result = execJadxCli(buildArgs(
+				List.of("--no-res", "--single-class", "HelloWorld", "--single-class-fast"),
+				"samples/hello.dex"));
+		assertThat(result).isEqualTo(0);
+		assertThat(collectJavaFilesInDir(outputDir))
+				.singleElement()
+				.satisfies(path -> assertThat(path.getFileName().toString()).isEqualTo("HelloWorld.java"));
+	}
+
+	@Test
 	public void testSmaliInput() throws Exception {
 		decompile("samples/HelloWorld.smali");
 	}

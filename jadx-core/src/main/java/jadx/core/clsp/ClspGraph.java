@@ -39,6 +39,23 @@ public class ClspGraph {
 		this.root = rootNode;
 	}
 
+	public static ClspGraph loadBase(RootNode root) throws IOException, DecodeException {
+		ClspGraph graph = new ClspGraph(root);
+		graph.loadClsSetFile();
+		graph.initCache();
+		return graph;
+	}
+
+	public ClspGraph copyWithApp(RootNode newRoot, List<ClassNode> classes) {
+		ClspGraph copy = new ClspGraph(newRoot);
+		copy.nameMap = new HashMap<>(nameMap);
+		copy.superTypesCache = new HashMap<>(superTypesCache);
+		copy.implementsCache = new HashMap<>(implementsCache);
+		copy.addApp(classes);
+		copy.addAppToCache(classes);
+		return copy;
+	}
+
 	public void loadClsSetFile() throws IOException, DecodeException {
 		ClsSet set = new ClsSet(root);
 		set.loadFromClstFile();
@@ -179,35 +196,42 @@ public class ClspGraph {
 
 	private void fillSuperTypesCache() {
 		Map<String, Set<String>> map = new HashMap<>(nameMap.size());
-		Set<String> tmpSet = new HashSet<>();
 		for (Map.Entry<String, ClspClass> entry : nameMap.entrySet()) {
-			ClspClass cls = entry.getValue();
-			tmpSet.clear();
-			addSuperTypes(cls, tmpSet);
-			Set<String> result;
-			int size = tmpSet.size();
-			switch (size) {
-				case 0: {
-					result = Collections.emptySet();
-					break;
-				}
-				case 1: {
-					String supCls = tmpSet.iterator().next();
-					if (supCls.equals(Consts.CLASS_OBJECT)) {
-						result = OBJECT_SINGLE_SET;
-					} else {
-						result = Collections.singleton(supCls);
-					}
-					break;
-				}
-				default: {
-					result = new HashSet<>(tmpSet);
-					break;
-				}
-			}
-			map.put(cls.getName(), result);
+			map.put(entry.getKey(), collectSuperTypes(entry.getValue()));
 		}
 		superTypesCache = map;
+	}
+
+	private void addAppToCache(List<ClassNode> classes) {
+		for (ClassNode cls : classes) {
+			String clsName = cls.getRawName();
+			ClspClass clspClass = nameMap.get(clsName);
+			Set<String> superTypes = collectSuperTypes(clspClass);
+			superTypesCache.put(clsName, superTypes);
+			for (String superType : superTypes) {
+				List<String> baseList = implementsCache.get(superType);
+				List<String> updatedList = baseList == null ? new ArrayList<>() : new ArrayList<>(baseList);
+				updatedList.add(clsName);
+				implementsCache.put(superType, updatedList);
+			}
+		}
+	}
+
+	private Set<String> collectSuperTypes(ClspClass cls) {
+		Set<String> result = new HashSet<>();
+		addSuperTypes(cls, result);
+		int size = result.size();
+		if (size == 0) {
+			return Collections.emptySet();
+		}
+		if (size == 1) {
+			String supCls = result.iterator().next();
+			if (supCls.equals(Consts.CLASS_OBJECT)) {
+				return OBJECT_SINGLE_SET;
+			}
+			return Collections.singleton(supCls);
+		}
+		return result;
 	}
 
 	private void addSuperTypes(ClspClass cls, Set<String> result) {

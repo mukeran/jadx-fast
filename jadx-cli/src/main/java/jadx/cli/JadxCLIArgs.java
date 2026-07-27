@@ -80,6 +80,27 @@ public class JadxCLIArgs implements IJadxConfig {
 	@Parameter(names = { "--single-class-output" }, description = "file or dir for write if decompile a single class")
 	protected String singleClassOutput = null;
 
+	@JadxConfigExclude
+	@Parameter(
+			names = { "--single-class-fast" },
+			description = "load only the requested single class, raw name only, disables full input class loading"
+	)
+	protected boolean singleClassFast = false;
+
+	@JadxConfigExclude
+	@Parameter(
+			names = { "--single-class-timings" },
+			description = "print detailed timings for single class loading and decompilation"
+	)
+	protected boolean singleClassTimings = false;
+
+	@JadxConfigExclude
+	@Parameter(
+			names = { "--single-class-daemon" },
+			description = "keep JVM and input loaded, read class names from stdin until 'quit'"
+	)
+	protected boolean singleClassDaemon = false;
+
 	@Parameter(names = { "--output-format" }, description = "can be 'java' or 'json'")
 	protected String outputFormat = "java";
 
@@ -553,6 +574,18 @@ public class JadxCLIArgs implements IJadxConfig {
 
 	public String getSingleClassOutput() {
 		return singleClassOutput;
+	}
+
+	public boolean isSingleClassFast() {
+		return singleClassFast;
+	}
+
+	public boolean isSingleClassTimings() {
+		return singleClassTimings;
+	}
+
+	public boolean isSingleClassDaemon() {
+		return singleClassDaemon;
 	}
 
 	public boolean isSkipResources() {

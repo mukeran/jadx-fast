@@ -28,6 +28,8 @@ node_modules/
 jadx-output/
 *-tmp/
 **/tmp/
+jadx-daemon-dist/
+/work/
 *.jobf
 *.jadx
 

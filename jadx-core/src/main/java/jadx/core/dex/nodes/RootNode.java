@@ -92,6 +92,7 @@ public class RootNode {
 
 	private List<IDexTreeVisitor> preDecompilePasses;
 	private ProcessClass processClasses;
+	private boolean singleClassMode;
 
 	private ClspGraph clsp;
 	private @Nullable String appPackage;
@@ -137,6 +138,14 @@ public class RootNode {
 		}
 	}
 
+	public boolean isSingleClassMode() {
+		return singleClassMode;
+	}
+
+	public void setSingleClassMode(boolean singleClassMode) {
+		this.singleClassMode = singleClassMode;
+	}
+
 	public void loadClasses(List<ICodeLoader> loadedInputs) {
 		for (ICodeLoader codeLoader : loadedInputs) {
 			codeLoader.visitClasses(cls -> {
@@ -148,6 +157,24 @@ public class RootNode {
 				Utils.checkThreadInterrupt();
 			});
 		}
+	}
+
+	public boolean loadSingleClass(List<ICodeLoader> loadedInputs, String clsName) {
+		boolean[] found = { false };
+		for (ICodeLoader codeLoader : loadedInputs) {
+			if (found[0]) {
+				break;
+			}
+			found[0] = codeLoader.visitClass(clsName, cls -> {
+				try {
+					addClassNode(new ClassNode(RootNode.this, cls));
+				} catch (Exception e) {
+					addDummyClass(cls, e);
+				}
+				Utils.checkThreadInterrupt();
+			});
+		}
+		return found[0];
 	}
 
 	public void finishClassLoad() {
@@ -274,6 +301,20 @@ public class RootNode {
 			}
 		} catch (Exception e) {
 			throw new JadxRuntimeException("Error loading jadx class set", e);
+		}
+	}
+
+	public ClspGraph loadBaseClassPath() {
+		try {
+			return ClspGraph.loadBase(this);
+		} catch (Exception e) {
+			throw new JadxRuntimeException("Error loading base jadx class set", e);
+		}
+	}
+
+	public void initClassPath(ClspGraph baseClsp) {
+		if (this.clsp == null) {
+			this.clsp = baseClsp.copyWithApp(this, classes);
 		}
 	}
 

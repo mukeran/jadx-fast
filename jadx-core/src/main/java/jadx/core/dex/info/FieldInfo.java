@@ -4,6 +4,7 @@ import java.util.Objects;
 
 import jadx.api.plugins.input.data.IFieldRef;
 import jadx.core.codegen.TypeGen;
+import jadx.core.deobf.NameMapper;
 import jadx.core.dex.instructions.args.ArgType;
 import jadx.core.dex.nodes.IFieldInfoRef;
 import jadx.core.dex.nodes.RootNode;
@@ -24,13 +25,21 @@ public final class FieldInfo implements IFieldInfoRef {
 
 	public static FieldInfo from(RootNode root, ClassInfo declClass, String name, ArgType type) {
 		FieldInfo field = new FieldInfo(declClass, name, type);
+		field.applySingleClassAlias(root);
 		return root.getInfoStorage().getField(field);
 	}
 
 	public static FieldInfo fromRef(RootNode root, IFieldRef fieldRef) {
 		ClassInfo declClass = ClassInfo.fromName(root, fieldRef.getParentClassType());
 		FieldInfo field = new FieldInfo(declClass, fieldRef.getName(), ArgType.parse(fieldRef.getType()));
+		field.applySingleClassAlias(root);
 		return root.getInfoStorage().getField(field);
+	}
+
+	private void applySingleClassAlias(RootNode root) {
+		if (root.isSingleClassMode() && (root.getArgs().isRenameValid() || root.getArgs().isRenamePrintable())) {
+			alias = NameMapper.makeValidIdentifier(name, "f");
+		}
 	}
 
 	public String getName() {

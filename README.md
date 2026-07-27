@@ -1,257 +1,263 @@
-<img src="https://raw.githubusercontent.com/skylot/jadx/master/jadx-gui/src/main/resources/logos/jadx-logo.png" width="64" align="left" />
+# JADX Fast Single Class
 
-## JADX
+Experimental JADX v1.5.6 fork optimized for low-latency decompilation of one
+class from a large APK or DEX input.
 
-![Build status](https://img.shields.io/github/actions/workflow/status/skylot/jadx/build-artifacts.yml)
-![GitHub contributors](https://img.shields.io/github/contributors/skylot/jadx)
-![GitHub all releases](https://img.shields.io/github/downloads/skylot/jadx/total)
-![GitHub release (latest by SemVer)](https://img.shields.io/github/downloads/skylot/jadx/latest/total)
-![Latest release](https://img.shields.io/github/release/skylot/jadx.svg)
-[![Maven Central](https://img.shields.io/maven-central/v/io.github.skylot/jadx-core)](https://search.maven.org/search?q=g:io.github.skylot%20AND%20jadx)
-![Java 11+](https://img.shields.io/badge/Java-11%2B-blue)
-[![License](http://img.shields.io/:license-apache-blue.svg)](http://www.apache.org/licenses/LICENSE-2.0.html)
+The project keeps JADX's existing method decompilation pipeline (instruction
+decoding, CFG, SSA, type inference, region recovery, and Java generation), but
+adds an independent input path that avoids building a full application model
+when only one class is requested.
 
-**jadx** - Dex to Java decompiler
+> This is a private experimental fork, not an official JADX feature. For the
+> upstream project and its full documentation, see
+> [skylot/jadx](https://github.com/skylot/jadx) and
+> [README_UPSTREAM.md](README_UPSTREAM.md).
 
-Command line and GUI tools for producing Java source code from Android Dex and Apk files
+## Background
 
-> [!WARNING]
-> Please note that in most cases **jadx** can't decompile all 100% of the code, so errors will occur.<br />
-> Check [Troubleshooting guide](https://github.com/skylot/jadx/wiki/Troubleshooting-Q&A#decompilation-issues) for workarounds.
+Official JADX `--single-class` limits the final decompilation and save step, but
+the requested class is selected only after `JadxDecompiler.load()` finishes.
+For a large APK, the standard path can still:
 
-**Main features:**
-- decompile Dalvik bytecode to Java code from APK, dex, aar, aab and zip files
-- decode `AndroidManifest.xml` and other resources from `resources.arsc`
-- deobfuscator included
+- open every DEX;
+- create `ClassNode`, `MethodNode`, and `FieldNode` models for all classes;
+- initialize inheritance and rename information;
+- scan all methods for usage/xref data;
+- run global prepare visitors;
+- finally decompile only the requested class.
 
-**jadx-gui features:**
-- view decompiled code with highlighted syntax
-- jump to declaration
-- find usage
-- full text search
-- smali debugger, check [wiki page](https://github.com/skylot/jadx/wiki/Smali-debugger) for setup and usage
+That behavior preserves rich cross-class context, but it is expensive for
+one-shot class extraction and high-frequency class lookup services.
 
-Jadx-gui key bindings can be found [here](https://github.com/skylot/jadx/wiki/JADX-GUI-Key-bindings)
+## What Changes
 
-See these features in action here: [jadx-gui features overview](https://github.com/skylot/jadx/wiki/jadx-gui-features-overview)
+### Target-only input loading
 
-<img src="https://user-images.githubusercontent.com/118523/142730720-839f017e-38db-423e-b53f-39f5f0a0316f.png" width="700"/>
+The new path resolves a raw class name directly to its DEX `class_def` entry and
+creates a model only for that class:
 
-### Download
-- release
-  from [github: ![Latest release](https://img.shields.io/github/release/skylot/jadx.svg)](https://github.com/skylot/jadx/releases/latest)
-- latest [unstable build ![GitHub commits since tagged version (branch)](https://img.shields.io/github/commits-since/skylot/jadx/latest/master)](https://nightly.link/skylot/jadx/workflows/build-artifacts/master)
-
-After download unpack zip file go to `bin` directory and run:
-- `jadx` - command line version
-- `jadx-gui` - UI version
-
-On Windows run `.bat` files with double-click\
-**Note:** ensure you have installed Java 11 or later 64-bit version.
-For Windows, you can download it from [oracle.com](https://www.oracle.com/java/technologies/downloads/#jdk17-windows) (select x64 Installer).
-
-### Install
-- Arch Linux
-  [![Arch Linux package](https://img.shields.io/archlinux/v/extra/any/jadx)](https://archlinux.org/packages/extra/any/jadx/)
-  [![AUR Version](https://img.shields.io/aur/version/jadx-git)](https://aur.archlinux.org/packages/jadx-git)
-  ```bash
-  sudo pacman -S jadx
-  ```
-- macOS
-  [![homebrew version](https://img.shields.io/homebrew/v/jadx)](https://formulae.brew.sh/formula/jadx)
-  ```bash
-  brew install jadx
-  ```
-- Flathub
-  [![Flathub Version](https://img.shields.io/flathub/v/com.github.skylot.jadx)](https://flathub.org/apps/com.github.skylot.jadx)
-  ```bash
-  flatpak install flathub com.github.skylot.jadx
-  ```
-
-### Use jadx as a library
-You can use jadx in your java projects, check details on [wiki page](https://github.com/skylot/jadx/wiki/Use-jadx-as-a-library)
-
-### Build from source
-JDK 17 or higher must be installed:
-```
-git clone https://github.com/skylot/jadx.git
-cd jadx
-./gradlew dist
+```text
+APK / DEX
+  -> prepare DEX readers
+  -> build descriptor -> class_def offset index
+  -> locate the requested raw class name
+  -> create one ClassNode
+  -> run target-local prepare passes
+  -> use the normal JADX method decompiler
+  -> write Java
 ```
 
-(on Windows, use `gradlew.bat` instead of `./gradlew`)
+No DEX rewriting, index remapping, bytecode relocation, or register
+reallocation is performed.
 
-Scripts for run jadx will be placed in `build/jadx/bin`
-and also packed to `build/jadx-<version>.zip`
+### Reusable class lookup index
 
-### Usage
-```
-jadx[-gui] [command] [options] <input files> (.apk, .dex, .jar, .class, .smali, .zip, .aar, .arsc, .aab, .xapk, .apkm, .jadx.kts)
-commands (use '<command> --help' for command options):
-  plugins	  - manage jadx plugins
+`DexReader` builds a lightweight map:
 
-options:
-  -d, --output-dir                              - output directory
-  -ds, --output-dir-src                         - output directory for sources
-  -dr, --output-dir-res                         - output directory for resources
-  -r, --no-res                                  - do not decode resources
-  -s, --no-src                                  - do not decompile source code
-  -j, --threads-count                           - processing threads count, default: 16
-  --single-class                                - decompile a single class, full name, raw or alias
-  --single-class-output                         - file or dir for write if decompile a single class
-  --output-format                               - can be 'java' or 'json', default: java
-  -e, --export-gradle                           - save as gradle project (set '--export-gradle-type' to 'auto')
-  --export-gradle-type                          - Gradle project template for export:
-                                                   'auto' - detect automatically
-                                                   'android-app' - Android Application (apk)
-                                                   'android-library' - Android Library (aar)
-                                                   'simple-java' - simple Java
-  -m, --decompilation-mode                      - code output mode:
-                                                   'auto' - trying best options (default)
-                                                   'restructure' - restore code structure (normal java code)
-                                                   'simple' - simplified instructions (linear, with goto's)
-                                                   'fallback' - raw instructions without modifications
-  --show-bad-code                               - show inconsistent code (incorrectly decompiled)
-  --no-xml-pretty-print                         - do not prettify XML
-  --no-imports                                  - disable use of imports, always write entire package name
-  --no-debug-info                               - disable debug info parsing and processing
-  --add-debug-lines                             - add comments with debug line numbers if available
-  --no-inline-anonymous                         - disable anonymous classes inline
-  --no-inline-methods                           - disable methods inline
-  --no-move-inner-classes                       - disable move inner classes into parent
-  --no-inline-kotlin-lambda                     - disable inline for Kotlin lambdas
-  --no-finally                                  - don't extract finally block
-  --no-restore-switch-over-string               - don't restore switch over string
-  --no-replace-consts                           - don't replace constant value with matching constant field
-  --escape-unicode                              - escape non latin characters in strings (with \u)
-  --respect-bytecode-access-modifiers           - don't change original access modifiers
-  --mappings-path                               - deobfuscation mappings file or directory. Allowed formats: Tiny and Tiny v2 (both '.tiny'), Enigma (.mapping) or Enigma directory
-  --mappings-mode                               - set mode for handling the deobfuscation mapping file:
-                                                   'read' - just read, user can always save manually (default)
-                                                   'read-and-autosave-every-change' - read and autosave after every change
-                                                   'read-and-autosave-before-closing' - read and autosave before exiting the app or closing the project
-                                                   'ignore' - don't read or save (can be used to skip loading mapping files referenced in the project file)
-  --deobf                                       - activate deobfuscation
-  --deobf-min                                   - min length of name, renamed if shorter, default: 3
-  --deobf-max                                   - max length of name, renamed if longer, default: 64
-  --deobf-whitelist                             - space separated list of classes (full name) and packages (ends with '.*') to exclude from deobfuscation, default: android.support.v4.* android.support.v7.* android.support.v4.os.* android.support.annotation.Px androidx.core.os.* androidx.annotation.Px
-  --deobf-cfg-file                              - deobfuscation mappings file used for JADX auto-generated names (in the JOBF file format), default: same dir and name as input file with '.jobf' extension
-  --deobf-cfg-file-mode                         - set mode for handling the JADX auto-generated names' deobfuscation map file:
-                                                   'read' - read if found, don't save (default)
-                                                   'read-or-save' - read if found, save otherwise (don't overwrite)
-                                                   'overwrite' - don't read, always save
-                                                   'ignore' - don't read and don't save
-  --deobf-res-name-source                       - better name source for resources:
-                                                   'auto' - automatically select best name (default)
-                                                   'resources' - use resources names
-                                                   'code' - use R class fields names
-  --use-source-name-as-class-name-alias         - use source name as class name alias:
-                                                   'always' - always use source name if it's available
-                                                   'if-better' - use source name if it seems better than the current one
-                                                   'never' - never use source name, even if it's available
-  --source-name-repeat-limit                    - allow using source name if it appears less than a limit number, default: 10
-  --use-kotlin-methods-for-var-names            - use kotlin intrinsic methods to rename variables, values: disable, apply, apply-and-hide, default: apply
-  --use-headers-for-detect-resource-extensions  - Use headers for detect resource extensions if resource obfuscated
-  --rename-flags                                - fix options (comma-separated list of):
-                                                   'case' - fix case sensitivity issues (according to --fs-case-sensitive option),
-                                                   'valid' - rename java identifiers to make them valid,
-                                                   'printable' - remove non-printable chars from identifiers,
-                                                  or single 'none' - to disable all renames
-                                                  or single 'all' - to enable all (default)
-  --integer-format                              - how integers are displayed:
-                                                   'auto' - automatically select (default)
-                                                   'decimal' - use decimal
-                                                   'hexadecimal' - use hexadecimal
-  --type-update-limit                           - type update limit count (per one instruction), default: 10
-  --fs-case-sensitive                           - treat filesystem as case sensitive, false by default
-  --cfg                                         - save methods control flow graph to dot file
-  --raw-cfg                                     - save methods control flow graph (use raw instructions)
-  --call-graph                                  - save app call graph in format: 'dot' or 'json', default: none
-  -f, --fallback                                - set '--decompilation-mode' to 'fallback' (deprecated)
-  --use-dx                                      - use dx/d8 to convert java bytecode
-  --comments-level                              - set code comments level, values: error, warn, info, debug, user-only, none, default: info
-  --log-level                                   - set log level, values: quiet, progress, error, warn, info, debug, default: progress
-  -v, --verbose                                 - verbose output (set --log-level to DEBUG)
-  -q, --quiet                                   - turn off output (set --log-level to QUIET)
-  --disable-plugins                             - comma separated list of plugin ids to disable
-  --config <config-ref>                         - load configuration from file, <config-ref> can be:
-                                                   path to '.json' file
-                                                   short name - uses file with this name from config directory
-                                                   'none' - to disable config loading
-  --save-config <config-ref>                    - save current options into configuration file and exit, <config-ref> can be:
-                                                   empty - for default config
-                                                   path to '.json' file
-                                                   short name - file will be saved in config directory
-  --print-files                                 - print files and directories used by jadx (config, cache, temp)
-  --version                                     - print jadx version
-  -h, --help                                    - print this help
-
-Plugin options (-P<name>=<value>):
-  dex-input: Load .dex and .apk files
-    - dex-input.verify-checksum                 - verify dex file checksum before load, values: [yes, no], default: yes
-  java-convert: Convert .class, .jar and .aar files to dex
-    - java-convert.mode                         - convert mode, values: [dx, d8, both], default: both
-    - java-convert.d8-desugar                   - use desugar in d8, values: [yes, no], default: no
-  kotlin-metadata: Use kotlin.Metadata annotation for code generation
-    - kotlin-metadata.class-alias               - rename class alias, values: [yes, no], default: yes
-    - kotlin-metadata.method-args               - rename function arguments, values: [yes, no], default: yes
-    - kotlin-metadata.fields                    - rename fields, values: [yes, no], default: yes
-    - kotlin-metadata.companion                 - rename companion object, values: [yes, no], default: yes
-    - kotlin-metadata.data-class                - add data class modifier, values: [yes, no], default: yes
-    - kotlin-metadata.to-string                 - rename fields using toString, values: [yes, no], default: yes
-    - kotlin-metadata.getters                   - rename simple getters to field names, values: [yes, no], default: yes
-  kotlin-smap: Use kotlin.SourceDebugExtension annotation for rename class alias
-    - kotlin-smap.class-alias-source-dbg        - rename class alias from SourceDebugExtension, values: [yes, no], default: no
-  rename-mappings: various mappings support
-    - rename-mappings.format                    - mapping format, values: [AUTO, TINY_FILE, TINY_2_FILE, ENIGMA_FILE, ENIGMA_DIR, PROGUARD_FILE, SRG_FILE, XSRG_FILE, JAM_FILE, CSRG_FILE, TSRG_FILE, TSRG_2_FILE, INTELLIJ_MIGRATION_MAP_FILE, RECAF_SIMPLE_FILE, JOBF_FILE], default: AUTO
-    - rename-mappings.invert                    - invert mapping on load, values: [yes, no], default: no
-  smali-input: Load .smali files
-    - smali-input.api-level                     - Android API level, default: 27
-
-Environment variables:
-  JADX_DISABLE_XML_SECURITY - set to 'true' to disable all security checks for XML files
-  JADX_DISABLE_ZIP_SECURITY - set to 'true' to disable all security checks for zip files
-  JADX_DISABLE_ALL_SECURITY_FLAGS - set to 'true' to disable all security flags (xml, string, app package)
-  JADX_ZIP_MAX_ENTRIES_COUNT - maximum allowed number of entries in zip files (default: 100 000)
-  JADX_CONFIG_DIR - custom config directory, using system by default
-  JADX_CACHE_DIR - custom cache directory, using system by default
-  JADX_TMP_DIR - custom temp directory, using system by default
-
-Examples:
-  jadx -d out classes.dex
-  jadx --rename-flags "none" classes.dex
-  jadx --rename-flags "valid, printable" classes.dex
-  jadx --log-level ERROR app.apk
-  jadx -Pdex-input.verify-checksum=no app.apk
-```
-These options also work in jadx-gui running from command line and override options from preferences' dialog
-
-Usage for `plugins` command
-```
-usage: plugins [options]
-options:
-  -i, --install <locationId>      - install plugin with locationId
-  -j, --install-jar <path-to.jar> - install plugin from jar file
-  -l, --list                      - list installed plugins
-  -a, --available                 - list available plugins from jadx-plugins-list (aka marketplace)
-  -u, --update                    - update installed plugins
-  --uninstall <pluginId>          - uninstall plugin with pluginId
-  --disable <pluginId>            - disable plugin with pluginId
-  --enable <pluginId>             - enable plugin with pluginId
-  --list-all                      - list all plugins including bundled and dropins
-  --list-versions <locationId>    - fetch latest versions of plugin from locationId (will download all artefacts, limited to 10)
-  -h, --help                      - print this help
+```text
+class descriptor -> class_def offset
 ```
 
+This avoids reconstructing every class node and allows daemon requests to jump
+directly to the requested definition.
 
-### Troubleshooting
-Please check wiki page [Troubleshooting Q&A](https://github.com/skylot/jadx/wiki/Troubleshooting-Q&A)
+### Reusable framework classpath
 
-### Contributing
-To support this project you can:
-  - Post thoughts about new features/optimizations that important to you
-  - Submit decompilation issues, please read before proceed: [Open issue](CONTRIBUTING.md#Open-Issue)
-  - Open pull request, please follow these rules: [Pull Request Process](CONTRIBUTING.md#Pull-Request-Process)
+The Android/Java framework `ClspGraph` is loaded once. Each request creates a
+small overlay containing the target application class. Framework classpath
+loading is also overlapped with APK/DEX input loading during preparation.
 
----------------------------------------
-*Licensed under the Apache 2.0 License*
+### Daemon mode
+
+The daemon keeps these objects alive:
+
+- JVM;
+- JADX plugins;
+- decompressed DEX input and readers;
+- class lookup indexes;
+- framework classpath graph.
+
+Each request rebuilds a lightweight `RootNode` and decompiles the requested
+class. Java source results are intentionally not cached yet.
+
+### Timing instrumentation
+
+Detailed timings are available for:
+
+- JVM startup before `main`;
+- CLI setup;
+- plugin and input preparation;
+- framework classpath preparation;
+- class index creation and lookup;
+- root/classpath/pass initialization;
+- pre-decompile visitors;
+- target class decompilation;
+- output saving.
+
+## Usage
+
+JDK 17 or later is required.
+
+Build:
+
+```bash
+./gradlew clean dist
+```
+
+The distribution is generated under `build/jadx`.
+
+### Fast one-shot mode
+
+```bash
+build/jadx/bin/jadx \
+  --single-class com.example.MainActivity \
+  --single-class-fast \
+  --single-class-timings \
+  --no-res \
+  --single-class-output out/MainActivity.java \
+  app.apk
+```
+
+Fast lookup currently expects the original/raw class name, not a JADX alias.
+
+### Daemon mode
+
+```bash
+build/jadx/bin/jadx \
+  --single-class-daemon \
+  --single-class-output out \
+  app.apk
+```
+
+After the initial JSON `ready` response, write one raw class name per line:
+
+```text
+com.example.MainActivity
+com.example.feature.DetailActivity
+quit
+```
+
+Each response contains status, output path, and stage timings.
+
+## Benchmark
+
+Measured on a 258 MiB APK containing 34 DEX files, targeting
+`com.ss.android.ugc.aweme.main.MainActivity`:
+
+| Mode | Wall time / latency | Peak RSS | Notes |
+| --- | ---: | ---: | --- |
+| Official `--single-class` | 101.95 s | 3.51 GiB | Full application model and global preparation |
+| Fast one-shot | about 1.25 s | about 1.05 GiB | New JVM and input preparation |
+| Fast daemon, first request | about 234 ms | reused process | After daemon preparation |
+| Fast daemon, warm complex class | 46-58 ms | reused process | No Java source cache |
+| Fast daemon, warm small class | 8-9 ms | reused process | No Java source cache |
+
+The one-shot improvement over the measured official single-class run is about
+81.6x. Results vary with APK size, class complexity, storage, JVM warmup, and
+enabled options.
+
+## Output Tradeoffs
+
+The performance gain comes from deliberately reducing application-wide
+context. The target class still uses JADX's full method-level decompilation
+pipeline, but some source-level recovery can be weaker:
+
+- no complete reverse xref or Find Usage data;
+- application parent/interface override resolution can be incomplete;
+- cross-class constant restoration can be unavailable;
+- application anonymous/inner classes may not be inlined;
+- bridge method and generic recovery can degrade;
+- aliases are local and can differ from a full JADX run;
+- requesting an inner class does not guarantee the same top-parent aggregation
+  as the official mode.
+
+In the benchmark above, both outputs contained 125 target methods:
+
+| Output | Lines | Bytes |
+| --- | ---: | ---: |
+| Official single-class | 1,959 | 88,694 |
+| Fast single-class | 1,668 | 71,420 |
+
+The largest difference was an application `Resources` wrapper class: the
+official mode loaded and inlined its implementation, while Fast mode retained a
+constructor reference to that external class.
+
+Use official JADX when complete xrefs, global renaming, hierarchy analysis, or
+maximum source readability matters. Use Fast mode for low-latency extraction,
+automation, triage, and class-oriented services.
+
+## Implementation Summary
+
+### CLI
+
+- Add `--single-class-fast`.
+- Add `--single-class-timings`.
+- Add `--single-class-daemon`.
+- Add stdin/stdout JSON daemon protocol.
+- Skip unrelated Java conversion inputs for APK/DEX Fast requests.
+- Skip resources by default in daemon mode.
+
+### Core lifecycle
+
+- Add `prepareSingleClassInput()`.
+- Add `prepareSingleClassLookup()`.
+- Add `loadSingleClass()` and `reloadSingleClass()`.
+- Add target-only `RootNode` initialization.
+- Reset request-local alias indexes between daemon requests.
+- Expose preparation and request timing maps.
+
+### DEX input
+
+- Add `ICodeLoader.visitClass()`.
+- Add `ICodeLoader.prepareSingleClassLookup()`.
+- Add descriptor-to-`class_def` indexing in `DexReader`.
+- Forward target lookup through `DexLoadResult` and `MergeCodeLoader`.
+
+### Classpath and naming
+
+- Split framework `ClspGraph` loading from application overlay creation.
+- Reuse the framework graph across daemon requests.
+- Add local Java identifier sanitization for single-class mode.
+
+### Tests
+
+- Add API coverage for target-only loading and reload behavior.
+- Add DEX input lookup/index tests.
+- Add CLI argument coverage.
+- Add identifier sanitization tests.
+
+## Runtime Overlay Distribution
+
+The modified classes can be distributed without overwriting an official JADX
+installation by using a child-first classloader:
+
+```text
+FastJadxClassLoader search order:
+1. fast-jadx-patch-1.5.6.jar
+2. official jadx-1.5.6/lib/*.jar
+3. parent classloader
+```
+
+All `jadx.*` classes must be defined by the same child classloader. Loading only
+selected classes in a second loader can cause type identity, package access,
+and linkage failures.
+
+This is a load-time overlay, not post-load HotSwap. The patch adds methods,
+fields, interface behavior, and new classes, so it must be active before the
+affected JADX classes are first defined. Patch and upstream versions must match
+exactly.
+
+## Validation
+
+The relevant core, CLI, and DEX input test suites pass. The optimized Fast
+output used during benchmarking remained stable with SHA-256:
+
+```text
+dccd599e35b106c72ced5058bd1ac06bae60343453be913ac78d263334fc8172
+```
+
+## Upstream and License
+
+This repository is based on JADX v1.5.6 (`skylot/jadx`) and retains the upstream
+Apache License 2.0. See [LICENSE](LICENSE) and
+[NOTICE](NOTICE).

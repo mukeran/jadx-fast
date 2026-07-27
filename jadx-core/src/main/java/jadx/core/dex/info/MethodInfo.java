@@ -8,6 +8,7 @@ import org.jetbrains.annotations.Nullable;
 import jadx.api.plugins.input.data.IMethodProto;
 import jadx.api.plugins.input.data.IMethodRef;
 import jadx.core.codegen.TypeGen;
+import jadx.core.deobf.NameMapper;
 import jadx.core.dex.instructions.args.ArgType;
 import jadx.core.dex.nodes.RootNode;
 import jadx.core.utils.Utils;
@@ -50,6 +51,7 @@ public final class MethodInfo implements Comparable<MethodInfo> {
 		ArgType returnType = ArgType.parse(methodRef.getReturnType());
 		List<ArgType> args = Utils.collectionMap(methodRef.getArgTypes(), ArgType::parse);
 		MethodInfo newMth = new MethodInfo(parentClass, methodRef.getName(), args, returnType);
+		newMth.applySingleClassAlias(root);
 		MethodInfo uniqMth = infoStorage.putMethod(newMth);
 		if (uniqId != 0) {
 			infoStorage.putByUniqId(uniqId, uniqMth);
@@ -59,7 +61,17 @@ public final class MethodInfo implements Comparable<MethodInfo> {
 
 	public static MethodInfo fromDetails(RootNode root, ClassInfo declClass, String name, List<ArgType> args, ArgType retType) {
 		MethodInfo newMth = new MethodInfo(declClass, name, args, retType);
+		newMth.applySingleClassAlias(root);
 		return root.getInfoStorage().putMethod(newMth);
+	}
+
+	private void applySingleClassAlias(RootNode root) {
+		if (!isConstructor()
+				&& !isClassInit()
+				&& root.isSingleClassMode()
+				&& (root.getArgs().isRenameValid() || root.getArgs().isRenamePrintable())) {
+			alias = NameMapper.makeValidIdentifier(name, "m");
+		}
 	}
 
 	public static MethodInfo fromMethodProto(RootNode root, ClassInfo declClass, String name, IMethodProto proto) {

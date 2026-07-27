@@ -61,6 +61,51 @@ public class JadxDecompilerTest {
 	}
 
 	@Test
+	public void testLoadSingleClass() {
+		JadxArgs args = new JadxArgs();
+		args.getInputFiles().add(getFileFromSampleDir("app-with-fake-dex.apk"));
+		args.setSkipResources(true);
+
+		try (JadxDecompiler jadx = new JadxDecompiler(args)) {
+			jadx.loadSingleClass("com.github.skylot.simple.MainActivity");
+
+			assertThat(jadx.getClasses())
+					.singleElement()
+					.extracting(JavaClass::getFullName)
+					.isEqualTo("com.github.skylot.simple.MainActivity");
+			assertThat(jadx.getClasses().get(0).getCode())
+					.containsOne("class MainActivity");
+			assertThat(jadx.getErrorsCount()).isEqualTo(0);
+		}
+	}
+
+	@Test
+	public void testReloadSingleClass() {
+		JadxArgs args = new JadxArgs();
+		args.getInputFiles().add(getFileFromSampleDir("app-with-fake-dex.apk"));
+		args.setSkipResources(true);
+
+		try (JadxDecompiler jadx = new JadxDecompiler(args)) {
+			jadx.prepareSingleClassInput();
+			jadx.prepareSingleClassLookup();
+			assertThat(jadx.reloadSingleClass("com.github.skylot.simple.MainActivity")).isTrue();
+			String firstCode = jadx.getClasses().get(0).getCode();
+			assertThat(jadx.getRoot().getClsp().isClsKnown("java.lang.String")).isTrue();
+
+			assertThat(jadx.reloadSingleClass("com.github.skylot.simple.MainActivity")).isTrue();
+			assertThat(jadx.getClasses())
+					.singleElement()
+					.extracting(JavaClass::getFullName)
+					.isEqualTo("com.github.skylot.simple.MainActivity");
+			assertThat(jadx.getClasses().get(0).getCode()).isEqualTo(firstCode);
+			assertThat(jadx.getRoot().getClsp().isClsKnown("java.lang.String")).isTrue();
+			assertThat(jadx.getSingleClassPrepareTimingsNanos()).containsKeys("input", "class-index", "total");
+			assertThat(jadx.getSingleClassRequestTimingsNanos()).containsKeys("class-lookup", "total");
+			assertThat(jadx.getErrorsCount()).isEqualTo(0);
+		}
+	}
+
+	@Test
 	public void testResourcesLoad() {
 		File sampleApk = getFileFromSampleDir("app-with-fake-dex.apk");
 

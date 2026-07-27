@@ -194,6 +194,17 @@ public class NameMapper {
 		return sb.toString();
 	}
 
+	public static String makeValidIdentifier(String name, String prefix) {
+		String cleanName = removeInvalidCharsMiddle(name);
+		if (cleanName.isEmpty()) {
+			return prefix;
+		}
+		if (!isValidIdentifier(cleanName)) {
+			return prefix + cleanName;
+		}
+		return cleanName;
+	}
+
 	private NameMapper() {
 	}
 }

@@ -28,6 +28,23 @@ public class DexLoadResult implements ICodeLoader {
 	}
 
 	@Override
+	public boolean visitClass(String clsName, Consumer<IClassData> consumer) {
+		for (DexReader dexReader : dexReaders) {
+			if (dexReader.visitClass(clsName, consumer)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	@Override
+	public void prepareSingleClassLookup() {
+		for (DexReader dexReader : dexReaders) {
+			dexReader.prepareClassDefIndex();
+		}
+	}
+
+	@Override
 	public void close() throws IOException {
 		if (closeable != null) {
 			closeable.close();

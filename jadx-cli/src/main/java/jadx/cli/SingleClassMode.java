@@ -4,6 +4,7 @@ import java.io.File;
 import java.util.List;
 import java.util.stream.Collectors;
 
+import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -20,10 +21,14 @@ public class SingleClassMode {
 	private static final Logger LOG = LoggerFactory.getLogger(SingleClassMode.class);
 
 	public static boolean process(JadxDecompiler jadx, JadxCLIArgs cliArgs) {
+		return processWithResult(jadx, cliArgs) != null;
+	}
+
+	public static @Nullable ProcessResult processWithResult(JadxDecompiler jadx, JadxCLIArgs cliArgs) {
 		String singleClass = cliArgs.getSingleClass();
 		String singleClassOutput = cliArgs.getSingleClassOutput();
 		if (singleClass == null && singleClassOutput == null) {
-			return false;
+			return null;
 		}
 		ClassNode clsForProcess;
 		if (singleClass != null) {
@@ -57,11 +62,13 @@ public class SingleClassMode {
 			}
 		}
 		ICodeInfo codeInfo;
+		long decompileStart = System.nanoTime();
 		try {
 			codeInfo = clsForProcess.decompile();
 		} catch (Exception e) {
 			throw new JadxRuntimeException("Class decompilation failed", e);
 		}
+		long decompileNanos = System.nanoTime() - decompileStart;
 		String fileExt = SaveCode.getFileExtension(jadx.getRoot());
 		File out;
 		if (singleClassOutput == null) {
@@ -82,7 +89,33 @@ public class SingleClassMode {
 		} else {
 			LOG.info("Saving class '{}' to file '{}'", clsForProcess.getFullName(), resultOut.getAbsolutePath());
 		}
+		long saveStart = System.nanoTime();
 		SaveCode.save(codeInfo.getCodeStr(), resultOut);
-		return true;
+		long saveNanos = System.nanoTime() - saveStart;
+		return new ProcessResult(resultOut, decompileNanos, saveNanos);
+	}
+
+	public static final class ProcessResult {
+		private final File output;
+		private final long decompileNanos;
+		private final long saveNanos;
+
+		private ProcessResult(File output, long decompileNanos, long saveNanos) {
+			this.output = output;
+			this.decompileNanos = decompileNanos;
+			this.saveNanos = saveNanos;
+		}
+
+		public File getOutput() {
+			return output;
+		}
+
+		public long getDecompileNanos() {
+			return decompileNanos;
+		}
+
+		public long getSaveNanos() {
+			return saveNanos;
+		}
 	}
 }

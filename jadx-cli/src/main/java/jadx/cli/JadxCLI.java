@@ -1,6 +1,10 @@
 package jadx.cli;
 
+import java.lang.management.ManagementFactory;
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
+import java.util.Locale;
+import java.util.Map;
 import java.util.function.Consumer;
 
 import org.jetbrains.annotations.Nullable;
@@ -24,6 +28,9 @@ import jadx.plugins.tools.JadxExternalPluginsLoader;
 
 public class JadxCLI {
 	private static final Logger LOG = LoggerFactory.getLogger(JadxCLI.class);
+	private static final long JVM_PRE_MAIN_NANOS = Math.max(
+			0,
+			System.currentTimeMillis() - ManagementFactory.getRuntimeMXBean().getStartTime()) * 1_000_000L;
 
 	public static void main(String[] args) {
 		int result = 1;
@@ -39,6 +46,7 @@ public class JadxCLI {
 	}
 
 	public static int execute(String[] args, @Nullable Consumer<JadxArgs> argsMod) {
+		long cliSetupStart = System.nanoTime();
 		try {
 			JadxCLIArgs cliArgs = JadxCLIArgs.processArgs(args,
 					new JadxCLIArgs(),
@@ -50,7 +58,8 @@ public class JadxCLI {
 			if (argsMod != null) {
 				argsMod.accept(jadxArgs);
 			}
-			return runSave(jadxArgs, cliArgs);
+			long cliSetupNanos = System.nanoTime() - cliSetupStart;
+			return runSave(jadxArgs, cliArgs, cliSetupNanos);
 		} catch (JadxArgsValidateException e) {
 			LOG.error("Incorrect arguments: {}", e.getMessage());
 			return 1;
@@ -62,6 +71,13 @@ public class JadxCLI {
 
 	private static JadxArgs buildArgs(JadxCLIArgs cliArgs) {
 		JadxArgs jadxArgs = cliArgs.toJadxArgs();
+		if ((cliArgs.isSingleClassFast() || cliArgs.isSingleClassDaemon()) && isDexInput(jadxArgs)) {
+			jadxArgs.getDisabledPlugins().add("java-input");
+			jadxArgs.getDisabledPlugins().add("java-convert");
+		}
+		if (cliArgs.isSingleClassDaemon()) {
+			jadxArgs.setSkipResources(true);
+		}
 		jadxArgs.setCodeCache(new NoOpCodeCache());
 		jadxArgs.setUsageInfoCache(new EmptyUsageInfoCache());
 		jadxArgs.setPluginLoader(new JadxExternalPluginsLoader());
@@ -71,15 +87,36 @@ public class JadxCLI {
 		return jadxArgs;
 	}
 
-	private static int runSave(JadxArgs jadxArgs, JadxCLIArgs cliArgs) {
+	private static boolean isDexInput(JadxArgs jadxArgs) {
+		return !jadxArgs.getInputFiles().isEmpty()
+				&& jadxArgs.getInputFiles().stream().allMatch(file -> {
+					String name = file.getName().toLowerCase(Locale.ROOT);
+					return name.endsWith(".apk") || name.endsWith(".dex");
+				});
+	}
+
+	private static int runSave(JadxArgs jadxArgs, JadxCLIArgs cliArgs, long cliSetupNanos) {
+		if (cliArgs.isSingleClassDaemon()) {
+			return SingleClassDaemon.run(jadxArgs, cliArgs, JVM_PRE_MAIN_NANOS, cliSetupNanos);
+		}
 		try (JadxDecompiler jadx = new JadxDecompiler(jadxArgs)) {
-			jadx.load();
+			if (cliArgs.isSingleClassFast()) {
+				if (cliArgs.getSingleClass() == null) {
+					throw new JadxArgsValidateException("--single-class-fast requires --single-class");
+				}
+				jadx.loadSingleClass(cliArgs.getSingleClass());
+			} else {
+				jadx.load();
+			}
 			if (checkForErrors(jadx)) {
 				return 2;
 			}
 			writeCallGraph(jadx, cliArgs);
-			if (!SingleClassMode.process(jadx, cliArgs)) {
+			SingleClassMode.ProcessResult singleClassResult = SingleClassMode.processWithResult(jadx, cliArgs);
+			if (singleClassResult == null) {
 				save(jadx);
+			} else if (cliArgs.isSingleClassTimings()) {
+				printSingleClassTimings(jadx, singleClassResult, cliSetupNanos);
 			}
 			int errorsCount = jadx.getErrorsCount();
 			if (errorsCount != 0) {
@@ -90,6 +127,29 @@ public class JadxCLI {
 			LOG.info("done");
 			return 0;
 		}
+	}
+
+	private static void printSingleClassTimings(
+			JadxDecompiler jadx,
+			SingleClassMode.ProcessResult result,
+			long cliSetupNanos) {
+		Map<String, Long> timings = new LinkedHashMap<>();
+		timings.put("jvm-pre-main", JVM_PRE_MAIN_NANOS);
+		timings.put("cli-setup", cliSetupNanos);
+		jadx.getSingleClassPrepareTimingsNanos()
+				.forEach((name, nanos) -> timings.put("prepare." + name, nanos));
+		jadx.getSingleClassRequestTimingsNanos()
+				.forEach((name, nanos) -> timings.put("request." + name, nanos));
+		timings.put("decompile", result.getDecompileNanos());
+		timings.put("save", result.getSaveNanos());
+		StringBuilder report = new StringBuilder("single-class timings (ms):");
+		timings.forEach((name, nanos) -> report
+				.append(System.lineSeparator())
+				.append("  ")
+				.append(name)
+				.append(": ")
+				.append(String.format(Locale.ROOT, "%.3f", nanos / 1_000_000.0)));
+		LOG.info(report.toString());
 	}
 
 	private static void initCodeWriterProvider(JadxArgs jadxArgs) {

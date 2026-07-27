@@ -6,6 +6,7 @@ import java.util.Objects;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import jadx.core.deobf.NameMapper;
 import jadx.core.dex.instructions.args.ArgType;
 import jadx.core.dex.nodes.ClassNode;
 import jadx.core.dex.nodes.RootNode;
@@ -26,6 +27,32 @@ public final class ClassInfo implements Comparable<ClassInfo> {
 	private ClassInfo(RootNode root, ArgType type, boolean canBeInner) {
 		this.type = type;
 		splitAndApplyNames(root, type, canBeInner);
+		if (root.isSingleClassMode()) {
+			applySingleClassAlias(root);
+		}
+	}
+
+	private void applySingleClassAlias(RootNode root) {
+		if (root.getArgs().isRenameValid() || root.getArgs().isRenamePrintable()) {
+			String aliasName = NameMapper.makeValidIdentifier(getShortName(), "C");
+			if (isInner()) {
+				if (!aliasName.equals(getShortName())) {
+					changeShortName(aliasName);
+				}
+				return;
+			}
+			String aliasPkg = getPackage();
+			if (!aliasPkg.isEmpty()) {
+				String[] parts = aliasPkg.split("\\.");
+				for (int i = 0; i < parts.length; i++) {
+					parts[i] = NameMapper.makeValidIdentifier(parts[i], "p");
+				}
+				aliasPkg = String.join(".", parts);
+			}
+			if (!aliasName.equals(getShortName()) || !aliasPkg.equals(getPackage())) {
+				changePkgAndName(aliasPkg, aliasName);
+			}
+		}
 	}
 
 	public static ClassInfo fromType(RootNode root, ArgType type) {
